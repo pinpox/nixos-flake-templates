@@ -1,22 +1,77 @@
 {
-  inputs = {
-    naersk.url = "github:nix-community/naersk/master";
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    utils.url = "github:numtide/flake-utils";
-  };
+  description = "A simple Rust package";
 
-  outputs = { self, nixpkgs, utils, naersk }:
-    utils.lib.eachDefaultSystem (system:
-      let
-        pkgs = import nixpkgs { inherit system; };
-        naersk-lib = pkgs.callPackage naersk { };
-      in
-      {
-        defaultPackage = naersk-lib.buildPackage ./.;
-        devShell = with pkgs; mkShell {
-          buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy ];
-          RUST_SRC_PATH = rustPlatform.rustLibSrc;
-        };
-      }
-    );
+  # Nixpkgs / NixOS version to use.
+  inputs.nixpkgs.url = "nixpkgs/nixos-unstable";
+
+  outputs =
+    { self, nixpkgs }:
+    let
+
+      # to work with older version of flakes
+      lastModifiedDate = self.lastModifiedDate or self.lastModified or "19700101";
+
+      # Generate a user-friendly version number.
+      version = builtins.substring 0 8 lastModifiedDate;
+
+      # System types to support.
+      supportedSystems = [
+        "x86_64-linux"
+        "x86_64-darwin"
+        "aarch64-linux"
+        "aarch64-darwin"
+      ];
+
+      # Helper function to generate an attrset '{ x86_64-linux = f "x86_64-linux"; ... }'.
+      forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
+
+      # Nixpkgs instantiated for supported system types.
+      nixpkgsFor = forAllSystems (system: import nixpkgs { inherit system; });
+
+    in
+    {
+      # Provide some binary packages for selected system types.
+      packages = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgsFor.${system};
+        in
+        {
+
+          # The default package for 'nix build'. This makes sense if the
+          # flake provides only one package or there is a clear "main"
+          # package.
+          default = pkgs.rustPlatform.buildRustPackage {
+            pname = "hello-rust";
+            inherit version;
+            src = ./.;
+
+            # This hash locks the dependencies of this package. To begin with
+            # it is recommended to set this, but one must remember to bump this
+            # hash when your dependencies change.
+            cargoHash = pkgs.lib.fakeSha256;
+          };
+        }
+      );
+
+      # Add dependencies that are only needed for development
+      devShells = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgsFor.${system};
+        in
+        {
+          default = pkgs.mkShellNoCC {
+            RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
+            buildInputs = with pkgs; [
+              cargo
+              rustc
+              rustfmt
+              pre-commit
+              rustPackages.clippy
+            ];
+          };
+        }
+      );
+    };
 }
